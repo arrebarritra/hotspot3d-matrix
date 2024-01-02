@@ -261,9 +261,9 @@ void hotspot_opt1(float *p, float *tIn, float *tOut,
     
     // Create CSR diff matrices
     // TODO: optimise by only adding cc component once
-    float stencilX[3] = {cw, cc / 3.0f, ce};
-    float stencilY[3] = {cn, cc / 3.0f, cs};
-    float stencilZ[3] = {cb, cc / 3.0f, ct};
+    float stencilX[3] = {cw, cc, ce};
+    float stencilY[3] = {cn, 0.0f, cs};
+    float stencilZ[3] = {cb, 0.0f, ct};
     diffMatrixInit(dX, dXYRowPtr, dXYColIndx, nx, stencilX);
     diffMatrixInit(dY, dXYRowPtr, dXYColIndx, ny, stencilY);
     diffMatrixInit(dZ, dZRowPtr, dZColIndx, nz, stencilZ);
