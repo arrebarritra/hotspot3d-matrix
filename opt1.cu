@@ -292,7 +292,7 @@ void hotspot_opt1(float *p, float *tIn, float *tOut,
     for (int i = 0; i < numiter; ++i) {
         cusparseCalc(in);
         cublasCalc(!in, nx, ny, nz, stepDivCap);
-        addAmbTemp<<<blockDim, gridDim>>>(t_d[!in], ct, amb_temp);
+        addAmbTemp<<<gridDim, blockDim>>>(t_d[!in], ct, amb_temp);
         cudaDeviceSynchronize();
         // Swap ping-pong buffers
         in = !in;
