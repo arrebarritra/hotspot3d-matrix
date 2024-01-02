@@ -55,8 +55,7 @@ cusparseHandle_t cusparseHandle;
 // cuSPARSE diff matrix descriptions
 cusparseSpMatDescr_t dXDescr, dYDescr, dZDescr;
 // cuSPARSE data matrix descriptions (note ping pong strategy is used for T descr)
-cusparseDnMatDescr_t tXYDescr[2], tXYZDescr[2],
-                     pXYDescr, pXYZDescr;
+cusparseDnMatDescr_t tXYDescr[2], tXYZDescr[2];
 // cuSPARSE calculation buffers
 size_t bufferSizeX, bufferSizeY, bufferSizeZ;
 float *bufferX, *bufferY, *bufferZ;
@@ -122,15 +121,11 @@ void cusparseDataMatConfig(int nx, int ny, int nz) {
             t_d[0], CUDA_R_32F, CUSPARSE_ORDER_ROW));
     cusparseCheck(cusparseCreateDnMat(&tXYDescr[1], ny, nx, nx,
             t_d[1], CUDA_R_32F, CUSPARSE_ORDER_ROW));
-    cusparseCheck(cusparseCreateDnMat(&pXYDescr, ny, nx, nx,
-            p_d, CUDA_R_32F, CUSPARSE_ORDER_ROW));
     // Flattened version of data for operation by the diff Z matrix
     cusparseCheck(cusparseCreateDnMat(&tXYZDescr[0], nz, nx * ny, nx * ny,
             t_d[0], CUDA_R_32F, CUSPARSE_ORDER_ROW)); 
     cusparseCheck(cusparseCreateDnMat(&tXYZDescr[1], nz, nx * ny, nx * ny,
             t_d[1], CUDA_R_32F, CUSPARSE_ORDER_ROW));
-    cusparseCheck(cusparseCreateDnMat(&pXYZDescr, nz, nx * ny, nx * ny,
-            p_d, CUDA_R_32F, CUSPARSE_ORDER_ROW));
 
     // Use strided batches to create XY matrix for all layers
     cusparseCheck(cusparseDnMatSetStridedBatch(tXYDescr[0], nz, nx * ny));
