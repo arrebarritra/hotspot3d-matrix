@@ -218,9 +218,12 @@ __global__ void addAmbTemp(float* tOut, float ct, float ambTemp) {
     int blockId = blockIdx.x
             + blockIdx.y * gridDim.x
             + gridDim.x * gridDim.y * blockIdx.z;
-    int threadId = blockId * blockDim.x + threadIdx.x;
+    int threadId = threadIdx.x
+            + threadIdx.y * blockDim.x
+            + blockDim.x * blockDim.y * threadIdx.z;
+    int id = blockId * blockDim.x * blockDim.y * blockDim.z + threadId;
 
-    tOut[threadId] += ct * ambTemp;
+    tOut[id] += ct * ambTemp;
 }
 
 void hotspot_opt1(float *p, float *tIn, float *tOut,
