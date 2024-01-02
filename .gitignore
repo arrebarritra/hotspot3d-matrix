@@ -5,6 +5,7 @@
 !Makefile
 !README
 !LICENSE
+!run
 
 # Ignore generated binaries
 *.o
