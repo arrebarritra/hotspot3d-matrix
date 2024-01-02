@@ -1,57 +1,222 @@
+#include <cusparse_v2.h>
+#include <cublas_v2.h>
+
+#define gpuCheck(stmt)                                               \
+  do {                                                               \
+      cudaError_t err = stmt;                                        \
+      if (err != cudaSuccess) {                                      \
+          printf("%s. Failed to run stmt %s\n",	cudaGetErrorName(err), #stmt);           \
+          break;                                                     \
+      }                                                              \
+  } while (0)
+
+// Macro to check the cuBLAS status
+#define cublasCheck(stmt)                                            \
+  do {                                                               \
+      cublasStatus_t err = stmt;                                     \
+      if (err != CUBLAS_STATUS_SUCCESS) {                            \
+          printf("ERROR. Failed to run cuBLAS stmt %s\n", #stmt);    \
+          break;                                                     \
+      }                                                              \
+  } while (0)
+
+// Macro to check the cuSPARSE status
+#define cusparseCheck(stmt)                                          \
+  do {                                                               \
+      cusparseStatus_t err = stmt;                                   \
+      if (err != CUSPARSE_STATUS_SUCCESS) {                          \
+          printf("ERROR. Failed to run cuSPARSE stmt %s\n", #stmt);  \
+          break;                                                     \
+      }                                                              \
+  } while (0)
+
 long long get_time() {
 	struct timeval tv;
 	gettimeofday(&tv, NULL);
 	return (tv.tv_sec * 1000000) + tv.tv_usec;
 }
 
-__global__ void hotspotOpt1(float *p, float* tIn, float *tOut, float sdc,
-        int nx, int ny, int nz,
-        float ce, float cw, 
-        float cn, float cs,
-        float ct, float cb, 
-        float cc) 
-{
-    float amb_temp = 80.0;
+// -----------
+// GLOBAL VARS
+// -----------
 
-    int i = blockDim.x * blockIdx.x + threadIdx.x;  
-    int j = blockDim.y * blockIdx.y + threadIdx.y;
+const float zero = 0.0f;
+const float one = 1.0f;
 
-    int c = i + j * nx;
-    int xy = nx * ny;
+// Differentation matrices
+float *dX, *dY, *dZ;
+// Note: dX and dY will have same RowPtr and ColIndx
+int *dXYRowPtr, *dZRowPtr;
+int *dXYColIndx, *dZColIndx;
+// Device data (use ping pong strategy for input/output temp)
+float *t_d[2], *p_d;
+// cuSPARSE handle
+cusparseHandle_t cusparseHandle;
+// cuSPARSE diff matrix descriptions
+cusparseSpMatDescr_t dXDescr, dYDescr, dZDescr;
+// cuSPARSE data matrix descriptions (note ping pong strategy is used for T descr)
+cusparseDnMatDescr_t tXYDescr[2], tXYZDescr[2],
+                     pXYDescr, pXYZDescr;
+// cuSPARSE calculation buffers
+size_t bufferSizeX, bufferSizeY, bufferSizeZ;
+void* bufferX, bufferY, bufferZ;
+// cuBLAS handle
+cublasHandle_t cublasHandle;
 
-    int W = (i == 0)        ? c : c - 1;
-    int E = (i == nx-1)     ? c : c + 1;
-    int N = (j == 0)        ? c : c - nx;
-    int S = (j == ny-1)     ? c : c + nx;
+// ------------
+// CALCULATIONS
+// ------------
 
-    float temp1, temp2, temp3;
-    temp1 = temp2 = tIn[c];
-    temp3 = tIn[c+xy];
-    tOut[c] = cc * temp2 + cw * tIn[W] + ce * tIn[E] + cs * tIn[S]
-        + cn * tIn[N] + cb * temp1 + ct * temp3 + sdc * p[c] + ct * amb_temp;
-    c += xy;
-    W += xy;
-    E += xy;
-    N += xy;
-    S += xy;
+// Differentiation matrix, stencil is adapted for orientation
+void diffMatrixInit(double* A, int* ArowPtr, int* AcolIndx,
+    int rows, double stencil[3]) {
+  // Variable holding the position to insert a new element
+  size_t ptr = 0;
+  ArowPtr[0] = ptr;
 
-    for (int k = 1; k < nz-1; ++k) {
-        temp1 = temp2;
-        temp2 = temp3;
-        temp3 = tIn[c+xy];
-        tOut[c] = cc * temp2 + cw * tIn[W] + ce * tIn[E] + cs * tIn[S]
-            + cn * tIn[N] + cb * temp1 + ct * temp3 + sdc * p[c] + ct * amb_temp;
-        c += xy;
-        W += xy;
-        E += xy;
-        N += xy;
-        S += xy;
+  // Configure first row (2 elements due to boundary)
+  A[ptr] = stencil[0] + stencil[1];
+  AcolIndx[ptr++] = 0;
+  A[ptr] = stencil[2];
+  AcolIndx[ptr++] = 1;
+  ArowPtr[1] = ptr;
+
+  // Fill middle of the matrix
+  for (int i = 1; i < (rows - 1); ++i) {
+    for (int k = 0; k < 3; ++k) {
+      A[ptr] = stencil[k];
+      AcolIndx[ptr++] = i + k - 1;
     }
-    temp1 = temp2;
-    temp2 = temp3;
-    tOut[c] = cc * temp2 + cw * tIn[W] + ce * tIn[E] + cs * tIn[S]
-        + cn * tIn[N] + cb * temp1 + ct * temp3 + sdc * p[c] + ct * amb_temp;
-    return;
+    ArowPtr[i + 1] = ptr;
+  }
+
+  // Configure last row (2 elements due to boundary)
+  A[ptr] = stencil[0];
+  AcolIndx[ptr++] = rows - 2;
+  A[ptr] = stencil[1] + stencil[2];
+  AcolIndx[ptr++] = rows - 1;
+  ArowPtr[dimX] = ptr;
+}
+
+void cusparseDiffMatConfig(int nx, int ny, int nz) {
+    cusparseCheck(cusparseCreateCsr(&dXDescr, nx, nx, nvz_xy,
+            dXYRowPtr, dXYColIndx, dX,
+            CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO,
+            CUDA_R_32F));
+    cusparseCheck(cusparseCreateCsr(&dYDescr, ny, ny, nvz_xy,
+            dXYRowPtr, dXYColIndx, dY,
+            CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO,
+            CUDA_R_32F));
+    cusparseCheck(cusparseCreateCsr(&dZDescr, nz, nz, nvz_z,
+            dZRowPtr, dZColIndx, dZ,
+            CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO,
+            CUDA_R_32F));
+}
+
+void cusparseDataMatConfig(int nx, int ny, int nz) {
+    cusparseCheck(cusparseCreateDnMat(&tXYDescr[0], ny, nx, nx,
+            t_d[0], CUDA_R_32F, CUSPARSE_ORDER_ROW));
+    cusparseCheck(cusparseCreateDnMat(&tXYDescr[1], ny, nx, nx,
+            t_d[1], CUDA_R_32F, CUSPARSE_ORDER_ROW));
+    cusparseCheck(cusparseCreateDnMat(&pXYDescr, ny, nx, nx,
+            p_d, CUDA_R_32F, CUSPARSE_ORDER_ROW));
+    // Flattened version of data for operation by the diff Z matrix
+    cusparseCheck(cusparseCreateDnMat(&tInXYZDescr, nz, nx * ny, nx * ny,
+            t_d[0], CUDA_R_32F, CUSPARSE_ORDER_ROW)); 
+    cusparseCheck(cusparseCreateDnMat(&tOutXYZDescr, nz, nx * ny, nx * ny,
+            t_d[1], CUDA_R_32F, CUSPARSE_ORDER_ROW));
+    cusparseCheck(cusparseCreateDnMat(&pXYZDescr, nz, nx * ny, nx * ny,
+            p_d, CUDA_R_32F, CUSPARSE_ORDER_ROW));
+
+    // Use strided batches to create XY matrix for all layers
+    cusparseCheck(cusparseSetStridedBatch(tXYDescr[0], nz, nx * ny));
+    cusparseCheck(cusparseSetStridedBatch(tXYDescr[1], nz, nx * ny));
+}
+
+// Calculate and allocate calculation buffer
+cusparseCalcBufferAlloc() {
+    // Note: calculation buffers will be reused as ping pong buffers
+    // Note: Buffer size symmetrical between t___[0] and t___[1],
+    //       hence only one calc performed 
+    cusparseCheck(cursparseSpMM_bufferSize(cusparseHandle,
+                    CUSPARSE_OPERATION_NON_TRANSPOSE,
+                    CUSPARSE_OPERATION_TRANSPOSE,
+                    &one, dXDescr, tXYDescr[0],
+                    &one, tXYDescr[1],
+                    CUSPARSE_SPMM_CSR_ALG1,
+                    &bufferSizeX)
+                );
+    cusparseCheck(cursparseSpMM_bufferSize(cusparseHandle,
+                    CUSPARSE_OPERATION_NON_TRANSPOSE,
+                    CUSPARSE_OPERATION_NON_TRANSPOSE,
+                    &one, dYDescr, tXYDescr[0],
+                    &one, tXYDescr[1],
+                    CUSPARSE_SPMM_CSR_ALG1,
+                    &bufferSizeY)
+                );
+    cusparseCheck(cusparseSpMM_bufferSize(cusparseHandle,
+                    CUSPARSE_OPERATION_NON_TRANSPOSE,
+                    CUSPARSE_OPERATION_NON_TRANSPOSE,
+                    &one, dZDescr, tXYZDescr[0],
+                    &one, tXYZDescr[1],
+                    CUSPARSE_SPMM_CSR_ALG1,
+                    &bufferSizeZ)
+                );
+    
+    gpuCheck(cudaMallocManaged(&bufferX, bufferSizeX));
+    gpuCheck(cudaMallocManaged(&bufferY, bufferSizeY));
+    gpuCheck(cudaMallocManaged(&bufferZ, bufferSizeZ));
+}
+
+// Perform cuSPARSE part of calculation
+cusparseCalc(int in) {
+    int out = !in;
+
+    cusparseCheck(cusparseSpMM(curparseHandle,
+                    CUSPARSE_OPERATION_NON_TRANSPOSE,
+                    CUSPARSE_OPERATION_TRANSPOSE,
+                    &one, dXDescr, tXYDescr[in],
+                    &one, tXYDescr[out],
+                    CUSPARSE_SPMM_CSR_ALG1,
+                    &bufferX)
+                );
+    cudaDeviceSynchronize();
+
+    cusparseCheck(cusparseSpMM(curparseHandle,
+                    CUSPARSE_OPERATION_NON_TRANSPOSE,
+                    CUSPARSE_OPERATION_NON_TRANSPOSE,
+                    &one, dYDescr, tXYDescr[in],
+                    &one, tXYDescr[out],
+                    CUSPARSE_SPMM_CSR_ALG1,
+                    &bufferY)
+                );
+    cudaDeviceSynchronize();
+
+    cusparseCheck(cusparseSpMM(curparseHandle,
+                    CUSPARSE_OPERATION_NON_TRANSPOSE,
+                    CUSPARSE_OPERATION_NON_TRANSPOSE,
+                    &one, dZDescr, tXYZDescr[in],
+                    &one, tXYZDescr[out],
+                    CUSPARSE_SPMM_CSR_ALG1,
+                    &bufferZ)
+                );
+    cudaDeviceSynchronize();
+}
+
+// Perform cuBLAS part of calculation
+cublasCalc(int out, int nx, int ny, int nz, float sdc) {
+    cublasCheck(cublasSaxpy(cublasHandle, nx * ny * nz,
+                    &sdc, p_d, 1, t_d[out], 1));
+    cudaDeviceSynchronize();       
+}
+
+__global__ addAmbTemp(float* tOut, float ct, float ambTemp) {
+    int blockId = blockIdx.x
+            + blockIdx.y * gridDim.x
+            + gridDim.x * gridDim.y * blockIdx.z;
+    int threadId = blockId * blockDim.x + threadIdx.x;
+
+    tOut[threadId] += ct *s ambTemp;
 }
 
 void hotspot_opt1(float *p, float *tIn, float *tOut,
@@ -68,35 +233,67 @@ void hotspot_opt1(float *p, float *tIn, float *tOut,
 
     cc = 1.0 - (2.0*ce + 2.0*cn + 3.0*ct);
 
+    // Copy temp and power data to device
     size_t s = sizeof(float) * nx * ny * nz;  
-    float  *tIn_d, *tOut_d, *p_d;
-    cudaMalloc((void**)&p_d,s);
-    cudaMalloc((void**)&tIn_d,s);
-    cudaMalloc((void**)&tOut_d,s);
-    cudaMemcpy(tIn_d, tIn, s, cudaMemcpyHostToDevice);
-    cudaMemcpy(p_d, p, s, cudaMemcpyHostToDevice);
+    gpuCheck(cudaMalloc(&p_d,s));
+    gpuCheck(cudaMalloc(&t_d[0],s));
+    gpuCheck(cudaMalloc(&t_d[1],s));
+    gpuCheck(cudaMemcpy(t_d[0], tIn, s, cudaMemcpyHostToDevice));
+    gpuCheck(cudaMemcpy(p_d, p, s, cudaMemcpyHostToDevice));
 
-    cudaFuncSetCacheConfig(hotspotOpt1, cudaFuncCachePreferL1);
+    // non-zero values for respective matrices
+    int nzv_xy = 3 * (nx - 2) + 4
+    int nzv_z = 3 * (nz - 2) + 4
 
-    dim3 block_dim(64, 4, 1);
-    dim3 grid_dim(nx / 64, ny / 4, 1);
+    gpuCheck(cudaMallocManaged(&dX, sizeof(float) * nzv_xy));
+    gpuCheck(cudaMallocManaged(&dY, sizeof(float) * nzv_xy));
+    gpuCheck(cudaMallocManaged(&dZ, sizeof(float) * nzv_z));
+    gpuCheck(cudaMallocManaged(&dXYRowPtr, sizeof(int) * (nx + 1)));
+    gpuCheck(cudaMallocManaged(&dZRowPtr, sizeof(int) * (nz + 1)));
+    gpuCheck(cudaMallocManaged(&dXYColIndx, sizeof(int) * nzv_xy);
+    gpuCheck(cudaMallocManaged(&dZColIndx, sizeof(int) * nzv_z);
+    
+    // Create CSR diff matrices
+    // TODO: optimise by only adding cc component once
+    diffMatrixInit(dX, dXYRowPtr, dXYColIndx, nx, {cw, cc / 3.0f, ce});
+    diffMatrixInit(dY, dXYRowPtr, dXYColIndx, ny, {cn, cc / 3.0f, cs});
+    diffMatrixInit(dZ, dZRowPtr, dZColIndx, nz, {cb, cc / 3.0f, ct});
+
+    // Init cuSPARSE
+    cusparseCheck(cusparseCreate(&cusparseHandle));
+
+    // Set up cuSPARSE matrices and calc buffers
+    cusparseDiffMatConfig(nx, ny, nz);
+    cusparseDataMatConfig(nx, ny, nz);
+    cusparseCalcBufferAlloc();
+
+    // Init cuBLAS
+    cublasCheck(cublasCreate(&cublasHandle));
+    cublasCheck(cublasSetPointerMode(cublasHandle, CUBLAS_POINTER_MODE_HOST));
 
     long long start = get_time();
+    int in = 0;
+    dim3 blockDim(8, 8, 8);
+    dim3 gridDim((nx + 8) / 8, (ny + 8) / 8, (nz + 8) / 8);
+    amb_temp = 80.0f;
     for (int i = 0; i < numiter; ++i) {
-        hotspotOpt1<<<grid_dim, block_dim>>>
-            (p_d, tIn_d, tOut_d, stepDivCap, nx, ny, nz, ce, cw, cn, cs, ct, cb, cc);
-        float *t = tIn_d;
-        tIn_d = tOut_d;
-        tOut_d = t;
+        cusparseCalc(in);
+        cublasCalc(in, nx, ny, nz, stepDivCap);
+        addAmbTemp<<<blockDim, gridDim>>>(t_d[!in], ct, amb_temp);
+        
+        // Swap ping-pong buffers
+        in = !in;
     }
+    out = in;
     cudaDeviceSynchronize();
+
     long long stop = get_time();
     float time = (float)((stop - start)/(1000.0 * 1000.0));
     printf("Time: %.3f (s)\n",time);
-    cudaMemcpy(tOut, tOut_d, s, cudaMemcpyDeviceToHost);
+    cudaMemcpy(tOut, t_d[out], s, cudaMemcpyDeviceToHost);
     cudaFree(p_d);
-    cudaFree(tIn_d);
-    cudaFree(tOut_d);
+    cudaFree(t_d[0]);
+    cudaFree(t_d[1]);
     return;
 }
 
