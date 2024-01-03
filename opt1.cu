@@ -210,14 +210,7 @@ void cublasCalc(int out, int nx, int ny, int nz, float sdc) {
 }
 
 __global__ void addAmbTemp(float* tOut, float ct, float ambTemp) {
-    int blockId = blockIdx.x
-            + blockIdx.y * gridDim.x
-            + gridDim.x * gridDim.y * blockIdx.z;
-    int threadId = threadIdx.x
-            + threadIdx.y * blockDim.x
-            + blockDim.x * blockDim.y * threadIdx.z;
-    int id = blockId * blockDim.x * blockDim.y * blockDim.z + threadId;
-
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
     tOut[id] += ct * ambTemp;
 }
 
@@ -284,8 +277,8 @@ void hotspot_opt1(float *p, float *tIn, float *tOut,
 
     long long start = get_time();
     int in = 0;
-    dim3 blockDim(8, 8, 8);
-    dim3 gridDim((nx + 8) / 8, (ny + 8) / 8, (nz + 8) / 8);
+    dim3 blockDim(1024);
+    dim3 gridDim((nx * ny * nz + 1024) / 1024);
     float amb_temp = 80.0f;
     for (int i = 0; i < numiter; ++i) {
         cusparseCalc(in);
