@@ -149,7 +149,7 @@ void cusparseCalcBufferAlloc() {
                     CUSPARSE_OPERATION_NON_TRANSPOSE,
                     CUSPARSE_OPERATION_NON_TRANSPOSE,
                     &one, dXDescr, tXDescr[0],
-                    &one, tXDescr[1],
+                    &zero, tXDescr[1],
                     CUDA_R_32F, CUSPARSE_SPMM_CSR_ALG1,
                     &bufferSizeX)
                 );
@@ -157,7 +157,7 @@ void cusparseCalcBufferAlloc() {
                     CUSPARSE_OPERATION_NON_TRANSPOSE,
                     CUSPARSE_OPERATION_NON_TRANSPOSE,
                     &one, dYDescr, tYDescr[0],
-                    &one, tYDescr[1],
+                    &zero, tYDescr[1],
                     CUDA_R_32F, CUSPARSE_SPMM_CSR_ALG2,
                     &bufferSizeY)
                 );
@@ -165,7 +165,7 @@ void cusparseCalcBufferAlloc() {
                     CUSPARSE_OPERATION_NON_TRANSPOSE,
                     CUSPARSE_OPERATION_NON_TRANSPOSE,
                     &one, dZDescr, tZDescr[0],
-                    &one, tZDescr[1],
+                    &zero, tZDescr[1],
                     CUDA_R_32F, CUSPARSE_SPMM_CSR_ALG2,
                     &bufferSizeZ)
                 );
@@ -183,7 +183,7 @@ void cusparseCalc(int in) {
                     CUSPARSE_OPERATION_NON_TRANSPOSE,
                     CUSPARSE_OPERATION_NON_TRANSPOSE,
                     &one, dXDescr, tXDescr[in],
-                    &one, tXDescr[out],
+                    &zero, tXDescr[out],
                     CUDA_R_32F, CUSPARSE_SPMM_CSR_ALG1,
                     bufferX)
                 );
@@ -193,7 +193,7 @@ void cusparseCalc(int in) {
                     CUSPARSE_OPERATION_NON_TRANSPOSE,
                     CUSPARSE_OPERATION_NON_TRANSPOSE,
                     &one, dYDescr, tYDescr[in],
-                    &one, tYDescr[out],
+                    &zero, tYDescr[out],
                     CUDA_R_32F, CUSPARSE_SPMM_CSR_ALG2,
                     bufferY)
                 );
@@ -203,7 +203,7 @@ void cusparseCalc(int in) {
                     CUSPARSE_OPERATION_NON_TRANSPOSE,
                     CUSPARSE_OPERATION_NON_TRANSPOSE,
                     &one, dZDescr, tZDescr[in],
-                    &one, tZDescr[out],
+                    &zero, tZDescr[out],
                     CUDA_R_32F, CUSPARSE_SPMM_CSR_ALG2,
                     bufferZ)
                 );
