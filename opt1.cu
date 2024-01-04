@@ -55,7 +55,7 @@ cusparseHandle_t cusparseHandle;
 // cuSPARSE diff matrix descriptions
 cusparseSpMatDescr_t dXDescr, dYDescr, dZDescr;
 // cuSPARSE data matrix descriptions (note ping pong strategy is used for T descr)
-cusparseDnMatDescr_t tXYDescr[2], tXYZDescr[2];
+cusparseDnMatDescr_t tXDescr[2], tYDescr[2], tZDescr[2];
 // cuSPARSE calculation buffers
 size_t bufferSizeX, bufferSizeY, bufferSizeZ;
 float *bufferX, *bufferY, *bufferZ;
@@ -117,19 +117,27 @@ void cusparseDiffMatConfig(int nx, int ny, int nz, int nzv_xy, int nzv_z) {
 }
 
 void cusparseDataMatConfig(int nx, int ny, int nz) {
-    cusparseCheck(cusparseCreateDnMat(&tXYDescr[0], ny, nx, nx,
+    // X matrix has col major layout due to later transposition in calc
+    cusparseCheck(cusparseCreateDnMat(&tXDescr[0], nx, ny, ny,
+            t_d[0], CUDA_R_32F, CUSPARSE_ORDER_COL));
+    cusparseCheck(cusparseCreateDnMat(&tXDescr[1], nx, ny, ny,
+            t_d[1], CUDA_R_32F, CUSPARSE_ORDER_COL));
+    // Y matrix is normal
+    cusparseCheck(cusparseCreateDnMat(&tYDescr[0], ny, nx, nx,
             t_d[0], CUDA_R_32F, CUSPARSE_ORDER_ROW));
-    cusparseCheck(cusparseCreateDnMat(&tXYDescr[1], ny, nx, nx,
+    cusparseCheck(cusparseCreateDnMat(&tYDescr[1], ny, nx, nx,
             t_d[1], CUDA_R_32F, CUSPARSE_ORDER_ROW));
     // Flattened version of data for operation by the diff Z matrix
-    cusparseCheck(cusparseCreateDnMat(&tXYZDescr[0], nz, nx * ny, nx * ny,
+    cusparseCheck(cusparseCreateDnMat(&tZDescr[0], nz, nx * ny, nx * ny,
             t_d[0], CUDA_R_32F, CUSPARSE_ORDER_ROW)); 
-    cusparseCheck(cusparseCreateDnMat(&tXYZDescr[1], nz, nx * ny, nx * ny,
+    cusparseCheck(cusparseCreateDnMat(&tZDescr[1], nz, nx * ny, nx * ny,
             t_d[1], CUDA_R_32F, CUSPARSE_ORDER_ROW));
 
     // Use strided batches to create XY matrix for all layers
-    cusparseCheck(cusparseDnMatSetStridedBatch(tXYDescr[0], nz, nx * ny));
-    cusparseCheck(cusparseDnMatSetStridedBatch(tXYDescr[1], nz, nx * ny));
+    cusparseCheck(cusparseDnMatSetStridedBatch(tXDescr[0], nz, nx * ny));
+    cusparseCheck(cusparseDnMatSetStridedBatch(tXDescr[1], nz, nx * ny));
+    cusparseCheck(cusparseDnMatSetStridedBatch(tYDescr[0], nz, nx * ny));
+    cusparseCheck(cusparseDnMatSetStridedBatch(tYDescr[1], nz, nx * ny));
 }
 
 // Calculate and allocate calculation buffer
@@ -139,25 +147,25 @@ void cusparseCalcBufferAlloc() {
     //       hence only one calc performed 
     cusparseCheck(cusparseSpMM_bufferSize(cusparseHandle,
                     CUSPARSE_OPERATION_NON_TRANSPOSE,
-                    CUSPARSE_OPERATION_TRANSPOSE,
-                    &one, dXDescr, tXYDescr[0],
-                    &one, tXYDescr[1],
-                    CUDA_R_32F, CUSPARSE_SPMM_CSR_ALG2,
+                    CUSPARSE_OPERATION_NON_TRANSPOSE,
+                    &one, dXDescr, tXDescr[0],
+                    &one, tXDescr[1],
+                    CUDA_R_32F, CUSPARSE_SPMM_CSR_ALG1,
                     &bufferSizeX)
                 );
     cusparseCheck(cusparseSpMM_bufferSize(cusparseHandle,
                     CUSPARSE_OPERATION_NON_TRANSPOSE,
                     CUSPARSE_OPERATION_NON_TRANSPOSE,
-                    &one, dYDescr, tXYDescr[0],
-                    &one, tXYDescr[1],
+                    &one, dYDescr, tYDescr[0],
+                    &one, tYDescr[1],
                     CUDA_R_32F, CUSPARSE_SPMM_CSR_ALG2,
                     &bufferSizeY)
                 );
     cusparseCheck(cusparseSpMM_bufferSize(cusparseHandle,
                     CUSPARSE_OPERATION_NON_TRANSPOSE,
                     CUSPARSE_OPERATION_NON_TRANSPOSE,
-                    &one, dZDescr, tXYZDescr[0],
-                    &one, tXYZDescr[1],
+                    &one, dZDescr, tZDescr[0],
+                    &one, tZDescr[1],
                     CUDA_R_32F, CUSPARSE_SPMM_CSR_ALG2,
                     &bufferSizeZ)
                 );
@@ -173,10 +181,10 @@ void cusparseCalc(int in) {
 
     cusparseCheck(cusparseSpMM(cusparseHandle,
                     CUSPARSE_OPERATION_NON_TRANSPOSE,
-                    CUSPARSE_OPERATION_TRANSPOSE,
-                    &one, dXDescr, tXYDescr[in],
-                    &one, tXYDescr[out],
-                    CUDA_R_32F, CUSPARSE_SPMM_CSR_ALG2,
+                    CUSPARSE_OPERATION_NON_TRANSPOSE,
+                    &one, dXDescr, tXDescr[in],
+                    &one, tXDescr[out],
+                    CUDA_R_32F, CUSPARSE_SPMM_CSR_ALG1,
                     bufferX)
                 );
     cudaDeviceSynchronize();
@@ -184,8 +192,8 @@ void cusparseCalc(int in) {
     cusparseCheck(cusparseSpMM(cusparseHandle,
                     CUSPARSE_OPERATION_NON_TRANSPOSE,
                     CUSPARSE_OPERATION_NON_TRANSPOSE,
-                    &one, dYDescr, tXYDescr[in],
-                    &one, tXYDescr[out],
+                    &one, dYDescr, tYDescr[in],
+                    &one, tYDescr[out],
                     CUDA_R_32F, CUSPARSE_SPMM_CSR_ALG2,
                     bufferY)
                 );
@@ -194,8 +202,8 @@ void cusparseCalc(int in) {
     cusparseCheck(cusparseSpMM(cusparseHandle,
                     CUSPARSE_OPERATION_NON_TRANSPOSE,
                     CUSPARSE_OPERATION_NON_TRANSPOSE,
-                    &one, dZDescr, tXYZDescr[in],
-                    &one, tXYZDescr[out],
+                    &one, dZDescr, tZDescr[in],
+                    &one, tZDescr[out],
                     CUDA_R_32F, CUSPARSE_SPMM_CSR_ALG2,
                     bufferZ)
                 );
