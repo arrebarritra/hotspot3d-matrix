@@ -35,8 +35,8 @@ Introduction. Provide some background on the performed problem
 Hotspot3d tries to solve the heat equation, given by the following PDE:
 
 \begin{align}
-    \frac{\partial T}{\partial t} = \mathbf{\alpha} \cdot \nabla^2 T(\mathbf{x}) + \beta P(\mathbf{x}) + \alpha_z T_{\text{amb}} \\
-    = \alpha_x \frac{\partial T}{\partial x} + \alpha_y \frac{\partial T}{\partial y} + \alpha_z \frac{\partial T}{\partial z} + \beta P(\mathbf{x}) + \alpha_z T_{\text{amb}}
+    \frac{\partial T}{\partial t} = \alpha \nabla^2 T(\mathbf{x}) + \beta P(\mathbf{x}) + \alpha \left[ T_{\text{amb}} - T(\mathbf{x}) \right] \\
+    = \alpha \left( \frac{\partial^2 T}{\partial x^2} + \frac{\partial^2 T}{\partial y^2} + \frac{\partial^2 T}{\partial z^2} \right) + \beta P(\mathbf{x}) + \alpha \left[ T_{\text{amb}} - T(\mathbf{x}) \right]
 \end{align}
 
 where $T$ is the temperature field, $P$ is the power field, $T_{\text{amb}}$ is the ambient temperature, and $\mathbf{\alpha}, \beta$ are arbitrary constants which have to do with chip properties.
