@@ -1,14 +1,14 @@
 #include <stdio.h>
 #include <time.h>
 #include <assert.h>
-#include <stdlib.h> 
-#include <math.h> 
+#include <stdlib.h>
+#include <math.h>
 #include <sys/time.h>
 
 #define BLOCK_SIZE 16
 #define STR_SIZE 256
 
-#define block_x_ 128 
+#define block_x_ 128
 #define block_y_ 2
 #define block_z_ 1
 #define MAX_PD	(3.0e6)
@@ -41,7 +41,7 @@ void readinput(float *vect, int grid_rows, int grid_cols, int layers, char *file
       fatal( "The file was not opened" );
 
 
-    for (i=0; i <= grid_rows-1; i++) 
+    for (i=0; i <= grid_rows-1; i++)
       for (j=0; j <= grid_cols-1; j++)
         for (k=0; k <= layers-1; k++)
           {
@@ -53,7 +53,7 @@ void readinput(float *vect, int grid_rows, int grid_cols, int layers, char *file
             vect[i*grid_cols+j+k*grid_rows*grid_cols] = val;
           }
 
-    fclose(fp);	
+    fclose(fp);
 
 }
 
@@ -67,7 +67,7 @@ void writeoutput(float *vect, int grid_rows, int grid_cols, int layers, char *fi
     if( (fp = fopen(file, "w" )) == 0 )
       printf( "The file was not opened\n" );
 
-    for (i=0; i < grid_rows; i++) 
+    for (i=0; i < grid_rows; i++)
       for (j=0; j < grid_cols; j++)
         for (k=0; k < layers; k++)
           {
@@ -76,13 +76,13 @@ void writeoutput(float *vect, int grid_rows, int grid_cols, int layers, char *fi
             index++;
           }
 
-    fclose(fp);	
+    fclose(fp);
 }
 
-void computeTempCPU(float *pIn, float* tIn, float *tOut, 
-        int nx, int ny, int nz, float Cap, 
-        float Rx, float Ry, float Rz, 
-        float dt, int numiter) 
+void computeTempCPU(float *pIn, float* tIn, float *tOut,
+        int nx, int ny, int nz, float Cap,
+        float Rx, float Ry, float Rz,
+        float dt, int numiter)
 {   float ce, cw, cn, cs, ct, cb, cc;
     float stepDivCap = dt / Cap;
     ce = cw =stepDivCap/ Rx;
@@ -112,7 +112,7 @@ void computeTempCPU(float *pIn, float* tIn, float *tOut,
                 }
         float *temp = tIn;
         tIn = tOut;
-        tOut = temp; 
+        tOut = temp;
         i++;
     }
     while(i < numiter);
@@ -121,7 +121,7 @@ void computeTempCPU(float *pIn, float* tIn, float *tOut,
 
 float accuracy(float *arr1, float *arr2, int len)
 {
-    float err = 0.0; 
+    float err = 0.0;
     int i;
     for(i = 0; i < len; i++)
     {
@@ -130,7 +130,7 @@ float accuracy(float *arr1, float *arr2, int len)
 
     return (float)sqrt(err/len);
 }
- 
+
 
 void usage(int argc, char **argv)
 {
@@ -180,11 +180,46 @@ int main(int argc, char** argv)
     float *powerIn, *tempOut, *tempIn, *tempCopy;
     int size = numCols * numRows * layers;
 
-    powerIn = (float*)calloc(size, sizeof(float));
-    tempCopy = (float*)malloc(size * sizeof(float));
-    tempIn = (float*)calloc(size,sizeof(float));
-    tempOut = (float*)calloc(size, sizeof(float));
-    float* answer = (float*)calloc(size, sizeof(float));
+    // Using cudaHostAlloc instead of calloc/malloc
+    cudaError_t err;
+
+    err = cudaHostAlloc((void**)&powerIn, size * sizeof(float), cudaHostAllocDefault);
+    if (err != cudaSuccess) {
+      fprintf(stderr, "cudaHostAlloc failed: %s\n", cudaGetErrorString(err));
+      exit(EXIT_FAILURE);
+    }
+
+    err = cudaHostAlloc((void**)&tempCopy, size * sizeof(float), cudaHostAllocDefault);
+    if (err != cudaSuccess) {
+        fprintf(stderr, "cudaHostAlloc failed: %s\n", cudaGetErrorString(err));
+        exit(EXIT_FAILURE);
+    }
+
+    err = cudaHostAlloc((void**)&tempIn, size * sizeof(float), cudaHostAllocDefault);
+    if (err != cudaSuccess) {
+        fprintf(stderr, "cudaHostAlloc failed: %s\n", cudaGetErrorString(err));
+        exit(EXIT_FAILURE);
+    }
+
+    err = cudaHostAlloc((void**)&tempOut, size * sizeof(float), cudaHostAllocDefault);
+    if (err != cudaSuccess) {
+        fprintf(stderr, "cudaHostAlloc failed: %s\n", cudaGetErrorString(err));
+        exit(EXIT_FAILURE);
+    }
+
+    float* answer;
+    err = cudaHostAlloc((void**)&answer, size * sizeof(float), cudaHostAllocDefault);
+    if (err != cudaSuccess) {
+        fprintf(stderr, "cudaHostAlloc failed: %s\n", cudaGetErrorString(err));
+        exit(EXIT_FAILURE);
+    }
+
+    // Initialize arrays to zero if needed
+    memset(powerIn, 0, size * sizeof(float));
+    memset(tempCopy, 0, size * sizeof(float));
+    memset(tempIn, 0, size * sizeof(float));
+    memset(tempOut, 0, size * sizeof(float));
+    memset(answer, 0, size * sizeof(float));
 
     readinput(powerIn,numRows, numCols, layers,pfile);
     readinput(tempIn, numRows, numCols, layers, tfile);
@@ -198,9 +233,10 @@ int main(int argc, char** argv)
     float acc = accuracy(tempOut,answer,numRows*numCols*layers);
     printf("Accuracy: %e\n",acc);
     writeoutput(tempOut,numRows, numCols, layers, ofile);
-    free(tempIn);
-    free(tempOut); free(powerIn);
+    cudaFree(tempIn);
+    cudaFree(tempOut);
+    cudaFree(powerIn);
     return 0;
-}	
+}
 
 
