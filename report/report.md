@@ -173,7 +173,7 @@ TODO: Write how we implement this in practice
 - Using column major format to rewrite T_row * dX_row^T -> dX_col * T_col (see cusparseSpMM docs)
 - cublasSaxpy for adding sdc * P
 - kernel for adding ct * T_amb
-- Write about implementation oriented things that might affect performance, ex. unified memory
+- Write about implementation oriented things that might affect performance, ex. unified memory, synchronisation, pinned memory etc.
 
 -->
 
