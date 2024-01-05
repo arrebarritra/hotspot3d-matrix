@@ -20,6 +20,7 @@
 #define FACTOR_CHIP	0.5
 
 #include "opt1.cu"
+#include "opt1_original.cu"
 
 /* chip parameters	*/
 float t_chip = 0.0005;
@@ -142,22 +143,24 @@ void usage(int argc, char **argv)
     fprintf(stderr, "\t<powerFile>  - name of the file containing the initial power values of each cell\n");
     fprintf(stderr, "\t<tempFile>  - name of the file containing the initial temperature values of each cell\n");
     fprintf(stderr, "\t<outputFile - output file\n");
+    fprintf(stderr, "\t<outputFile - output file for original algo\n");
     exit(1);
 }
 
 int main(int argc, char** argv)
 {
-    if (argc != 7)
+    if (argc != 8)
     {
         usage(argc,argv);
     }
 
-    char *pfile, *tfile, *ofile;
+    char *pfile, *tfile, *ofile, *ofileOriginal;
     int iterations = atoi(argv[3]);
 
     pfile = argv[4];
     tfile = argv[5];
     ofile = argv[6];
+    ofileOriginal = argv[7];
     int numCols = atoi(argv[1]);
     int numRows = atoi(argv[1]);
     int layers = atoi(argv[2]);
@@ -177,7 +180,7 @@ int main(int argc, char** argv)
     float dt = PRECISION / max_slope;
 
 
-    float *powerIn, *tempOut, *tempIn, *tempCopy;
+    float *powerIn, *tempOut, *tempOutOriginal, *tempIn, *tempCopy;
     int size = numCols * numRows * layers;
 
     // Using cudaHostAlloc instead of calloc/malloc
@@ -207,6 +210,12 @@ int main(int argc, char** argv)
         exit(EXIT_FAILURE);
     }
 
+    err = cudaHostAlloc((void**)&tempOutOriginal, size * sizeof(float), cudaHostAllocDefault);
+    if (err != cudaSuccess) {
+        fprintf(stderr, "cudaHostAlloc failed: %s\n", cudaGetErrorString(err));
+        exit(EXIT_FAILURE);
+    }
+
     float* answer;
     err = cudaHostAlloc((void**)&answer, size * sizeof(float), cudaHostAllocDefault);
     if (err != cudaSuccess) {
@@ -219,6 +228,7 @@ int main(int argc, char** argv)
     memset(tempCopy, 0, size * sizeof(float));
     memset(tempIn, 0, size * sizeof(float));
     memset(tempOut, 0, size * sizeof(float));
+    memset(tempOutOriginal, 0, size * sizeof(float));
     memset(answer, 0, size * sizeof(float));
 
     readinput(powerIn,numRows, numCols, layers,pfile);
@@ -227,12 +237,16 @@ int main(int argc, char** argv)
     memcpy(tempCopy,tempIn, size * sizeof(float));
 
     hotspot_opt1(powerIn, tempIn, tempOut, numCols, numRows, layers, Cap, Rx, Ry, Rz, dt,iterations);
+    hotspot_opt1_original(powerIn, tempIn, tempOutOriginal, numCols, numRows, layers, Cap, Rx, Ry, Rz, dt,iterations);
 
     computeTempCPU(powerIn, tempCopy, answer, numCols, numRows, layers, Cap, Rx, Ry, Rz, dt,iterations);
 
     float acc = accuracy(tempOut,answer,numRows*numCols*layers);
+    float accOriginal = accuracy(tempOutOriginal,answer,numRows*numCols*layers);
     printf("Accuracy: %e\n",acc);
+    printf("Accuracy Original: %e\n",accOriginal);
     writeoutput(tempOut,numRows, numCols, layers, ofile);
+    writeoutput(tempOutOriginal,numRows, numCols, layers, ofileOriginal);
     cudaFree(tempIn);
     cudaFree(tempOut);
     cudaFree(powerIn);
