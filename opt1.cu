@@ -175,6 +175,32 @@ void cusparseCalcBufferAlloc() {
     gpuCheck(cudaMallocManaged(&bufferZ, bufferSizeZ));
 }
 
+//preprocessing
+void cusparseCalcPreprocess() {
+    cusparseCheck(cusparseSpMM_preprocess(cusparseHandle, 
+                    CUSPARSE_OPERATION_NON_TRANSPOSE, 
+                    CUSPARSE_OPERATION_NON_TRANSPOSE, 
+                    &one, dXDescr, tXDescr[0], 
+                    &one, tXDescr[1], 
+                    CUDA_R_32F, CUSPARSE_SPMM_CSR_ALG1, 
+                    bufferX));
+    cusparseCheck(cusparseSpMM_preprocess(cusparseHandle, 
+                    CUSPARSE_OPERATION_NON_TRANSPOSE, 
+                    CUSPARSE_OPERATION_NON_TRANSPOSE, 
+                    &one, dYDescr, tYDescr[0], 
+                    &one, tYDescr[1], 
+                    CUDA_R_32F, CUSPARSE_SPMM_CSR_ALG1, 
+                    bufferY));
+    cusparseCheck(cusparseSpMM_preprocess(cusparseHandle, 
+                    CUSPARSE_OPERATION_NON_TRANSPOSE, 
+                    CUSPARSE_OPERATION_NON_TRANSPOSE, 
+                    &one, dZDescr, tZDescr[0], 
+                    &one, tZDescr[1], 
+                    CUDA_R_32F, CUSPARSE_SPMM_CSR_ALG1, 
+                    bufferZ));
+}
+
+
 // Perform cuSPARSE part of calculation
 void cusparseCalc(int in) {
     int out = !in;
@@ -274,6 +300,7 @@ void hotspot_opt1(float *p, float *tIn, float *tOut,
     cusparseDiffMatConfig(nx, ny, nz, nzv_xy, nzv_z);
     cusparseDataMatConfig(nx, ny, nz);
     cusparseCalcBufferAlloc();
+    cusparseCalcPreprocess();
 
     // Init cuBLAS
     cublasCheck(cublasCreate(&cublasHandle));
