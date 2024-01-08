@@ -38,6 +38,7 @@ For the application to be run with different data or specified with different da
 _Note:_ The dimensions specified in **'POWER_PATH'** and **'TEMP_PATH'** should correspond to **'ROWS/COLS'** and **'LAYERS'**.
 
 For example:
+
 `./3D 512 8 100 ./data/power_512x8 ./data/temp_512x8 ./res/output_512x8 ./res/output_512x8_original`
 
 
